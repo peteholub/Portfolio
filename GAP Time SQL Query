@@ -1,0 +1,107 @@
+
+
+USE AAD
+
+--Change @startdate & @enddate to the date range you are looking for
+DECLARE @startdate DATE, @enddate DATE, @starttime TIME, @endtime TIME
+
+--SET @startdate = '2022-02-27'
+--SET @enddate = '2022-02-28'
+
+SET @startdate = dateadd(day,-2, cast(getdate() as date))
+SET @enddate = dateadd(day,-1, cast(getdate() as date))
+
+SET @starttime = '20:45:00'
+SET @endtime = '07:00:00'
+;
+
+----This query pulls transactional data to determine the down time between transactions----
+
+
+--This CTE pulls the system driven cycle count trans and adds a "row" column & sorts the Carton Cycle count transactions for each location newest to oldest. This helps determine when the location cycle count was completed
+WITH
+CTE_work_q AS
+(
+SELECT
+row_number () OVER (partition by date_due, location_id ORDER BY time_due DESC) AS row, *
+
+FROM t_work_q (NOLOCK)
+WHERE work_type in ('08','09')
+),
+
+--This CTE limits the cycle count transactions to the last scan
+CTE_work_q_final AS
+(
+SELECT *
+FROM CTE_work_q
+WHERE row = '1'
+),
+
+--This CTE pulls the cycle count transactions adds the shift, Date_worked, qty_after, and limits 
+
+CTE_tran_log AS
+(
+SELECT
+CAST(start_tran_date AS Date) AS Tran_Date,
+CAST(end_tran_time AS time) AS Tran_Time,
+Date_Worked = @enddate,
+tran_type,
+location_id,
+
+CASE
+WHEN (employee_id IN ('AOC6','QTY3','QTR6','QTJR','QT76')) THEN '1st'
+WHEN (employee_id IN ('QZ09','BV15','E17U','EU7W','GBFS')) THEN '2nd'
+WHEN (employee_id IN ('QT89','BC6D','FI02','GQRC','QT96')) THEN '3rd'
+WHEN (employee_id IN ('A2MW','QT82','BIMD','CEO2','DK99')) THEN 'Mid'
+ELSE 'N/A'
+END AS "Shift",
+
+employee_id,
+ISNULL(hu_id, 0) AS LP,
+ISNULL(item_number, 0) AS SKU,
+num_items AS expected_qty,
+tran_qty,
+num_items + tran_qty AS qty_after,
+generic_attribute_1
+
+FROM t_tran_log (NOLOCK)
+
+WHERE tran_type in ('885', '800')
+AND CAST(start_tran_date AS Date) BETWEEN @startdate and @enddate
+)
+
+
+
+SELECT
+Tran_Date,
+Tran_Time,
+Date_Worked,
+tran_type,
+TTL.location_id,
+TTL.employee_id,
+TEmp.name,
+
+LP,
+SKU,
+expected_qty,
+tran_qty,
+qty_after,
+
+CASE
+WHEN (TTL.generic_attribute_1 = 'Cycle Count by Location') THEN 'CC_by_location'
+WHEN (b.work_type = '08' and b.priority = '30') THEN 'CC_by_LP'
+WHEN (TTL.tran_type = '885') THEN 'CC_LP_Audit'
+WHEN (b.priority = '10') THEN 'CC_user_initiated'
+ELSE 'CC_by_LP'
+END AS "CC_Type",
+
+generic_attribute_1
+
+FROM CTE_tran_log TTL
+LEFT JOIN t_employee TEmp (NOLOCK) ON TTL.employee_id = TEmp.id
+
+left join CTE_work_q_final b (NOLOCK)
+ON TTL.Tran_Date = CAST(b.CreatedDate as date) and TTL.location_id = b.location_id
+left join t_item_master c (NOLOCK) ON TTL.SKU = c.item_number
+
+
