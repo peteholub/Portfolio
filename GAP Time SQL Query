@@ -1,33 +1,34 @@
-
-
 USE AAD
 
---Change @startdate & @enddate to the date range you are looking for
-DECLARE @startdate DATE, @enddate DATE, @starttime TIME, @endtime TIME
+--Change @fromdate & @todate to the date range you are looking for
+DECLARE @fromdate DATE, @todate DATE, @fromtime TIME, @totime TIME
 
---SET @startdate = '2022-02-27'
---SET @enddate = '2022-02-28'
+SET @fromdate = '2022-02-27'
+SET @todate = '2022-02-28'
 
-SET @startdate = dateadd(day,-2, cast(getdate() as date))
-SET @enddate = dateadd(day,-1, cast(getdate() as date))
+--SET @fromdate = dateadd(day,-2, cast(getdate() as date))
+--	SET @todate = dateadd(day,-1, cast(getdate() as date))
 
-SET @starttime = '20:45:00'
-SET @endtime = '07:00:00'
+SET @fromtime = '20:30:00'
+SET @totime = '09:00:00'
 ;
 
 ----This query pulls transactional data to determine the down time between transactions----
+--initially it was a copy paste into excel then it was transitioned to a power query
 
 
---This CTE pulls the system driven cycle count trans and adds a "row" column & sorts the Carton Cycle count transactions for each location newest to oldest. This helps determine when the location cycle count was completed
+
+/*This CTE pulls the system driven cycle count trans and adds a "row" column & sorts the Carton Cycle count transactions for each location newest to oldest.
+This helps determine when the location cycle count was completed*/
+
 WITH
 CTE_work_q AS
 (
-SELECT
-row_number () OVER (partition by date_due, location_id ORDER BY time_due DESC) AS row, *
-
+SELECT row_number () OVER (partition by date_due, location_id ORDER BY time_due DESC) AS row, *
 FROM t_work_q (NOLOCK)
 WHERE work_type in ('08','09')
 ),
+
 
 --This CTE limits the cycle count transactions to the last scan
 CTE_work_q_final AS
@@ -37,71 +38,224 @@ FROM CTE_work_q
 WHERE row = '1'
 ),
 
---This CTE pulls the cycle count transactions adds the shift, Date_worked, qty_after, and limits 
+--This CTE pulls the 3rd shift 1st half cycle count transactions adds the shift, Date_worked, qty_after, and limits to the date range
 
-CTE_tran_log AS
+CTE_tran_log_3rd_first_half AS
 (
 SELECT
-CAST(start_tran_date AS Date) AS Tran_Date,
-CAST(end_tran_time AS time) AS Tran_Time,
-Date_Worked = @enddate,
+CONVERT(VARCHAR, start_tran_date,101) AS "Date",
+CONVERT(VARCHAR, end_tran_time, 8) AS "Time",
 tran_type,
 location_id,
 
 CASE
-WHEN (employee_id IN ('AOC6','QTY3','QTR6','QTJR','QT76')) THEN '1st'
-WHEN (employee_id IN ('QZ09','BV15','E17U','EU7W','GBFS')) THEN '2nd'
-WHEN (employee_id IN ('QT89','BC6D','FI02','GQRC','QT96')) THEN '3rd'
-WHEN (employee_id IN ('A2MW','QT82','BIMD','CEO2','DK99')) THEN 'Mid'
+WHEN (employee_id IN ('AO7Q','QTDH','QTDR','QTJR','QTQW','BEC6','CIY3','ETR6','BM76','G67S','QU9I')) THEN '1st'
+WHEN (employee_id IN ('QZ09','BV15','E17U','EU7W','GBFS','HOMW','QTM3', 'QU7A','QTIK', 'FGSN','G8BR','QTQF','FZXW')) THEN '2nd'
+WHEN (employee_id IN ('QT89','BC6D','FI02','GQRC','QT96','G4HI','CGP9','B68J','JU4M','GEZS','GXUW','FHJF')) THEN '3rd'
+WHEN (employee_id IN ('A2MW','QT82','BIMD','CEO2','DK99','DP06','DSUY','EUF7', 'JIBA','FHB8','AQH8','H7GG')) THEN 'Mid'
 ELSE 'N/A'
 END AS "Shift",
 
 employee_id,
+
+	(SELECT TEmp.name
+	FROM t_employee as TEmp with NOLOCK
+	WHERE TTL.employee_id = TEmp.id) as Name,
+
 ISNULL(hu_id, 0) AS LP,
 ISNULL(item_number, 0) AS SKU,
-num_items AS expected_qty,
+num_items AS "expected qty",
 tran_qty,
 num_items + tran_qty AS qty_after,
 generic_attribute_1
 
-FROM t_tran_log (NOLOCK)
-
+FROM t_tran_log as TTL(NOLOCK)
 WHERE tran_type in ('885', '800')
-AND CAST(start_tran_date AS Date) BETWEEN @startdate and @enddate
-)
+AND CAST(start_tran_date AS Date) = @fromdate 
+AND CONVERT(VARCHAR, end_tran_time, 8) >= @fromtime
+),
 
+--This CTE pulls the 3rd shift 2nd half cycle count transactions adds the shift, Date_worked, qty_after, and limits to the date range
 
-
+CTE_tran_log_3rd_second_half AS
+(
 SELECT
-Tran_Date,
-Tran_Time,
-Date_Worked,
+CONVERT(VARCHAR, start_tran_date,101) AS "Date",
+CONVERT(VARCHAR, end_tran_time, 8) AS "Time",
 tran_type,
-TTL.location_id,
-TTL.employee_id,
-TEmp.name,
-
-LP,
-SKU,
-expected_qty,
-tran_qty,
-qty_after,
+location_id,
 
 CASE
-WHEN (TTL.generic_attribute_1 = 'Cycle Count by Location') THEN 'CC_by_location'
+WHEN (employee_id IN ('AO7Q','QTDH','QTDR','QTJR','QTQW','BEC6','CIY3','ETR6','BM76','G67S','QU9I')) THEN '1st'
+WHEN (employee_id IN ('QZ09','BV15','E17U','EU7W','GBFS','HOMW','QTM3', 'QU7A','QTIK', 'FGSN','G8BR','QTQF','FZXW')) THEN '2nd'
+WHEN (employee_id IN ('QT89','BC6D','FI02','GQRC','QT96','G4HI','CGP9','B68J','JU4M','GEZS','GXUW','FHJF')) THEN '3rd'
+WHEN (employee_id IN ('A2MW','QT82','BIMD','CEO2','DK99','DP06','DSUY','EUF7', 'JIBA','FHB8','AQH8','H7GG')) THEN 'Mid'
+ELSE 'N/A'
+END AS "Shift",
+
+employee_id,
+	(SELECT TEmp.name
+	FROM t_employee as TEmp (NOLOCK)
+	WHERE TTL.employee_id = TEmp.id) as Name,
+ISNULL(hu_id, 0) AS LP,
+ISNULL(item_number, 0) AS SKU,
+num_items AS "expected qty",
+tran_qty,
+num_items + tran_qty AS qty_after,
+generic_attribute_1
+FROM t_tran_log TTL (NOLOCK)
+WHERE tran_type in ('885', '800')
+AND CAST(start_tran_date AS Date) = @todate
+AND CONVERT(VARCHAR, end_tran_time, 8) <= @totime
+),
+
+--union the 2 3rd shift halves
+CTE_third_union AS
+(
+SELECT *
+FROM CTE_tran_log_3rd_first_half
+
+UNION
+
+SELECT *
+FROM CTE_tran_log_3rd_second_half
+),
+
+
+CTE_third_final AS
+(
+SELECT
+
+CASE
+WHEN (tu.generic_attribute_1 = 'Cycle Count by Location') THEN 'CC_by_location'
 WHEN (b.work_type = '08' and b.priority = '30') THEN 'CC_by_LP'
-WHEN (TTL.tran_type = '885') THEN 'CC_LP_Audit'
+WHEN (tu.tran_type = '885') THEN 'CC_LP_Audit'
 WHEN (b.priority = '10') THEN 'CC_user_initiated'
 ELSE 'CC_by_LP'
 END AS "CC_Type",
 
-generic_attribute_1
+tu.Date,
+tu.Time,
+tu.Name,
+tu.Shift,
+tu.location_id,
+tu.LP,
+tu.SKU,
+tu.[expected qty],
+tu.tran_qty,
+tu.qty_after,
+tu.generic_attribute_1,
+c.price
 
-FROM CTE_tran_log TTL
-LEFT JOIN t_employee TEmp (NOLOCK) ON TTL.employee_id = TEmp.id
+FROM CTE_third_union tu (NOLOCK)
 
 left join CTE_work_q_final b (NOLOCK)
-ON TTL.Tran_Date = CAST(b.CreatedDate as date) and TTL.location_id = b.location_id
-left join t_item_master c (NOLOCK) ON TTL.SKU = c.item_number
+ON tu.Date = CAST(b.CreatedDate as date) and tu.location_id = b.location_id
+
+left join t_item_master c (NOLOCK) ON tu.SKU = c.item_number
+
+WHERE tu.Shift IN ('3rd', 'N/A')
+)
 
 
+
+--This CTE pulls the other shift cycle count transactions adds the shift, Date_worked, qty_after, and limits to the date range
+
+CTE_cc_tran_log_regular AS
+(
+SELECT
+CONVERT(VARCHAR, start_tran_date,101) AS "Date",
+CONVERT(VARCHAR, end_tran_time, 8) AS "Time",
+tran_type,
+location_id,
+
+CASE
+WHEN (employee_id IN ('AO7Q','QTDH','QTDR','QTJR','QTQW','BEC6','CIY3','ETR6','BM76','G67S','QU9I')) THEN '1st'
+WHEN (employee_id IN ('QZ09','BV15','E17U','EU7W','GBFS','HOMW','QTM3', 'QU7A','QTIK', 'FGSN','G8BR','QTQF','FZXW')) THEN '2nd'
+WHEN (employee_id IN ('QT89','BC6D','FI02','GQRC','QT96','G4HI','CGP9','B68J','JU4M','GEZS','GXUW','FHJF')) THEN '3rd'
+WHEN (employee_id IN ('A2MW','QT82','BIMD','CEO2','DK99','DP06','DSUY','EUF7', 'JIBA','FHB8','AQH8','H7GG')) THEN 'Mid'
+ELSE 'N/A'
+END AS "Shift",
+
+employee_id,
+	(SELECT TEmp.name
+	FROM t_employee as TEmp (NOLOCK)
+	WHERE TTL.employee_id = TEmp.id) as Name,
+ISNULL(hu_id, 0) AS LP,
+ISNULL(item_number, 0) AS SKU,
+num_items AS "expected qty",
+tran_qty,
+num_items + tran_qty AS qty_after,
+generic_attribute_1
+FROM t_tran_log TTL(NOLOCK)
+WHERE tran_type in ('885', '800')
+AND CAST(start_tran_date AS Date) = @todate
+),
+
+
+CTE_regular_final AS
+(
+SELECT
+
+CASE
+WHEN (a.generic_attribute_1 = 'Cycle Count by Location') THEN 'CC_by_location'
+WHEN (b.work_type = '08' and b.priority = '30') THEN 'CC_by_LP'
+WHEN (a.tran_type = '885') THEN 'CC_LP_Audit'
+WHEN (b.priority = '10') THEN 'CC_user_initiated'
+ELSE 'CC_by_LP'
+END AS "CC_Type",
+
+a.Date,
+a.Time,
+a.Name,
+a.Shift,
+a.location_id,
+a.LP,
+a.SKU,
+a.[expected qty],
+a.tran_qty,
+a.qty_after,
+a.generic_attribute_1,
+c.price
+
+FROM CTE_cc_tran_log_regular a (NOLOCK)
+
+left join CTE_work_q_final b (NOLOCK)
+ON a.Date = cast(b.CreatedDate as date) and a.location_id = b.location_id
+
+left join t_item_master c(NOLOCK)
+ON a.SKU = c.item_number
+
+WHERE a.Shift != '3rd'
+)
+
+--union 3rd shift and the other shifts
+CTE_Union_3rd_regular AS
+(
+SELECT *
+FROM CTE_third_final
+
+UNION
+
+SELECT *
+FROM CTE_regular_final
+
+)
+
+
+SELECT
+Date,
+Time,
+CC_Type,
+Name,
+Shift,
+location_id,
+LP,
+SKU,
+tran_qty AS "Variance",
+qty_after AS "QTY"
+
+FROM CTE_Union_3rd_regular
+
+GROUP BY Shift, Date, Time, Name, location_id, LP, SKU, CC_Type,[expected qty], tran_qty, ABS(tran_qty), price, qty_after
+ORDER BY Date, Name, Time;
